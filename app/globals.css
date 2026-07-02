@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Design tokens — mapped to Tailwind CSS vars
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    --background:   0 0% 100%;
+    --foreground:   222.2 84% 4.9%;
+    --card:         0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover:      0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary:      238.7 83.5% 66.7%;   /* indigo-500 */
+    --primary-foreground: 210 40% 98%;
+    --secondary:    210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted:        210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent:       210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive:  0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border:       214.3 31.8% 91.4%;
+    --input:        214.3 31.8% 91.4%;
+    --ring:         238.7 83.5% 66.7%;
+    --radius:       0.5rem;
+  }
+
+  /* Dark mode tokens — uncomment when dark mode is enabled in tailwind.config.ts */
+  /*
+  .dark {
+    --background:   222.2 84% 4.9%;
+    --foreground:   210 40% 98%;
+    --primary:      217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --border:       217.2 32.6% 17.5%;
+    --input:        217.2 32.6% 17.5%;
+  }
+  */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Global resets — 3G-optimised
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    /* Smooth scrolling — respects reduced-motion preference */
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    /* System font fallback renders instantly — no FOUT on 3G */
+    font-family: 'Syne', system-ui, -apple-system, sans-serif;
+    /* Prevent layout shift from scrollbar appearing */
+    overflow-y: scroll;
+    /* iOS momentum scrolling */
+    -webkit-overflow-scrolling: touch;
+    /* Optimise text rendering on mobile */
+    text-rendering: optimizeSpeed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tap highlight — better mobile UX */
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Focus visible — keyboard accessibility */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2;
+  }
+
+  /* Remove default list styles */
+  ul, ol { list-style: none; }
+
+  /* Images — prevent layout shifts */
+  img, video {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Typography — for course content (uses @tailwindcss/typography)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.prose {
+  @apply max-w-none;
+}
+
+.prose pre {
+  @apply rounded-lg bg-gray-900 text-gray-100 overflow-x-auto;
+}
+
+.prose code {
+  @apply rounded bg-gray-100 px-1 py-0.5 text-sm font-mono text-gray-800;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0 text-gray-100;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Utility classes
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@layer utilities {
+  /* Text truncation helpers */
+  .line-clamp-1 { -webkit-line-clamp: 1; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+  .line-clamp-2 { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+  .line-clamp-3 { -webkit-line-clamp: 3; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* Hide scrollbar but keep scrollability */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Thin scrollbar (sidebar, code panels) */
+  .thin-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+  .thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .thin-scrollbar::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+
+  /* Safe area insets for notched phones */
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+
+  /* GPU-accelerated animation hint */
+  .will-animate { will-change: transform, opacity; }
+
+  /* Skeleton shimmer */
+  .skeleton-shimmer {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Mux Player — 3G display overrides
+   ───────────────────────────────────────────────────────────────────────────── */
+
+mux-player {
+  --media-object-fit: contain;
+  --media-background-color: #000000;
+  --controls-backdrop-color: rgba(0, 0, 0, 0.5);
+  --time-range-buffered-color: rgba(255, 255, 255, 0.3);
+  --time-range-padding-top: 0px;
+  aspect-ratio: 16/9;
+  width: 100%;
+  display: block;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Print styles — for certificate download preview
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; color: black; }
+}

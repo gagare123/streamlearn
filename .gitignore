@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+
+# Environment — NEVER COMMIT
+.env
+.env.local
+.env.*.local
+
+prisma/dev.db
+dist/
+build/
+.DS_Store
+Thumbs.db
+.vscode/
+*.log
+/lib/generated/prisma

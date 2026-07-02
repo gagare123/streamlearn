@@ -1,0 +1,231 @@
+'use client'
+
+import { useState, type FormEvent } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type FieldErrors = Partial<Record<'email' | 'password', string[]>>
+
+type FormState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string; fields?: FieldErrors }
+  | { status: 'success' }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Login Page
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function LoginPage() {
+  const router = useRouter()
+  const [state, setState] = useState<FormState>({ status: 'idle' })
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setState({ status: 'loading' })
+
+    const formData = new FormData(e.currentTarget)
+    const email = formData.get('email') as string
+    const password = formData.get('password') as string
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+      })
+
+      const data = (await res.json()) as {
+        success: boolean
+        error?: string
+        fields?: FieldErrors
+        data?: { user: { role: string } }
+      }
+
+      if (!res.ok || !data.success) {
+        setState({
+          status: 'error',
+          message: data.error ?? 'Login failed. Please try again.',
+          // ✅ Only include fields if they exist
+          ...(data.fields ? { fields: data.fields } : {}),
+        })
+        return
+      }
+
+      setState({ status: 'success' })
+
+      // Redirect based on role
+      const role = data.data?.user.role
+if (role === 'ADMIN') window.location.href = '/dashboard/admin'
+else if (role === 'TUTOR') window.location.href = '/dashboard/tutor'
+else window.location.href = '/dashboard/student'
+    } catch {
+      setState({
+        status: 'error',
+        message: 'Network error. Please check your connection and try again.',
+      })
+    }
+  }
+
+  const isLoading = state.status === 'loading'
+  const fieldErrors = state.status === 'error' ? state.fields : undefined
+
+  return (
+    <div>
+      {/* ── Heading ──────────────────────────────────────────────────── */}
+      <div className="mb-8 text-center">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          Welcome back
+        </h1>
+        <p className="mt-1.5 text-sm text-gray-500">
+          Sign in to your StreamLearn account
+        </p>
+      </div>
+
+      {/* ── Error banner ─────────────────────────────────────────────── */}
+      {state.status === 'error' && !fieldErrors && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3.5 text-sm text-red-700">
+          <svg
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="mt-0.5 h-4 w-4 shrink-0"
+            aria-hidden="true"
+          >
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <span>{state.message}</span>
+        </div>
+      )}
+
+      {/* ── Form ─────────────────────────────────────────────────────── */}
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+        {/* Email */}
+        <div>
+          <label
+            htmlFor="email"
+            className="mb-1.5 block text-sm font-medium text-gray-700"
+          >
+            Email address
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+            disabled={isLoading}
+            placeholder="you@example.com"
+            className={inputClass(!!fieldErrors?.email?.length)}
+            aria-describedby={fieldErrors?.email ? 'email-error' : undefined}
+          />
+          {fieldErrors?.email?.map((err) => (
+            <p key={err} id="email-error" className="mt-1 text-xs text-red-600">
+              {err}
+            </p>
+          ))}
+        </div>
+
+        {/* Password */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <label
+              htmlFor="password"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Password
+            </label>
+            <Link
+              href="/forgot-password"
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              Forgot password?
+            </Link>
+          </div>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            disabled={isLoading}
+            placeholder="Enter your password"
+            className={inputClass(!!fieldErrors?.password?.length)}
+          />
+          {fieldErrors?.password?.map((err) => (
+            <p key={err} className="mt-1 text-xs text-red-600">
+              {err}
+            </p>
+          ))}
+        </div>
+
+        {/* Submit */}
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isLoading ? (
+            <>
+              <svg
+                className="mr-2 h-4 w-4 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Signing in…
+            </>
+          ) : (
+            'Sign in'
+          )}
+        </button>
+      </form>
+
+      {/* ── Divider ──────────────────────────────────────────────────── */}
+      <p className="mt-6 text-center text-sm text-gray-500">
+        Don&apos;t have an account?{' '}
+        <Link
+          href="/register"
+          className="font-medium text-indigo-600 hover:text-indigo-500"
+        >
+          Create one free
+        </Link>
+      </p>
+    </div>
+  )
+}
+
+function inputClass(hasError: boolean): string {
+  return [
+    'flex h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm',
+    'placeholder:text-gray-400',
+    'transition-colors',
+    'focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0',
+    'disabled:cursor-not-allowed disabled:bg-gray-50 disabled:opacity-60',
+    hasError
+      ? 'border-red-400 focus:ring-red-400'
+      : 'border-gray-300 focus:border-indigo-500',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}

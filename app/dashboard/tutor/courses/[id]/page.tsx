@@ -1,0 +1,439 @@
+'use client'
+
+import { useState, useEffect, useCallback, type FormEvent } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { useAuthGuard } from '@/hooks/use-auth-guard'
+import { useApiFetch } from '@/hooks/use-fetch'
+import { FullPageSkeleton } from '@/components/auth/full-page-skeleton'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
+import { formatNaira, formatDuration, nairaToKobo } from '@/lib/utils'
+import {
+  ArrowLeft, PlusCircle, ChevronDown, ChevronRight,
+  Trash2, Edit, Globe, Archive, Video, FileText,
+  CheckCircle, Clock, AlertCircle, Upload,
+} from 'lucide-react'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Lesson = {
+  id: string
+  title: string
+  position: number
+  muxAssetStatus: 'WAITING' | 'PREPARING' | 'READY' | 'ERRORED'
+  muxPlaybackId: string | null
+  durationSeconds: number
+  isFreePreview: boolean
+}
+
+type Section = {
+  id: string
+  title: string
+  position: number
+  lessons: Lesson[]
+}
+
+type CourseDetail = {
+  id: string
+  title: string
+  description: string | null
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  level: string
+  priceKobo: number
+  tags: string[]
+  totalLessons: number
+  totalDurationSeconds: number
+  totalEnrollments: number
+  curriculum: Section[]
+  tutor: { id: string; name: string }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mux status helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MuxStatusIcon({ status }: { status: Lesson['muxAssetStatus'] }) {
+  switch (status) {
+    case 'READY':
+      return <CheckCircle className="h-4 w-4 text-green-500" aria-label="Ready" />
+    case 'PREPARING':
+      return <Clock className="h-4 w-4 text-amber-500 animate-pulse" aria-label="Processing" />
+    case 'ERRORED':
+      return <AlertCircle className="h-4 w-4 text-red-500" aria-label="Error" />
+    case 'WAITING':
+      return <Upload className="h-4 w-4 text-gray-400" aria-label="Awaiting upload" />
+  }
+}
+
+const STATUS_BADGE: Record<string, 'success' | 'secondary' | 'outline'> = {
+  PUBLISHED: 'success', DRAFT: 'secondary', ARCHIVED: 'outline',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function CourseEditorPage() {
+  const { ready } = useAuthGuard({ roles: ['TUTOR', 'ADMIN'] })
+  const { apiFetch } = useApiFetch()
+  const params = useParams()
+  const courseId = params['id'] as string
+
+  const [course, setCourse] = useState<CourseDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  const [addingSectionTitle, setAddingSectionTitle] = useState('')
+  const [showAddSection, setShowAddSection] = useState(false)
+  const [addingLesson, setAddingLesson] = useState<string | null>(null)
+  const [newLessonTitle, setNewLessonTitle] = useState('')
+
+  const fetchCourse = useCallback(async () => {
+    const result = await apiFetch<{ course: CourseDetail }>(`/api/courses/${courseId}`)
+    if (result.ok) {
+      setCourse(result.data.course)
+      // Auto-expand all sections on first load
+      setExpandedSections(new Set(result.data.course.curriculum.map((s) => s.id)))
+    } else {
+      toast.error(result.error)
+    }
+    setLoading(false)
+  }, [apiFetch, courseId])
+
+  useEffect(() => { if (ready) void fetchCourse() }, [ready, fetchCourse])
+
+  // ── Add section ──────────────────────────────────────────────────────────
+  async function handleAddSection(e: FormEvent) {
+    e.preventDefault()
+    if (!addingSectionTitle.trim()) return
+    setSaving(true)
+
+    const result = await apiFetch(`/api/courses/${courseId}/sections`, {
+      method: 'POST',
+      body: JSON.stringify({ title: addingSectionTitle.trim() }),
+    })
+
+    if (result.ok) {
+      toast.success('Section added')
+      setAddingSectionTitle('')
+      setShowAddSection(false)
+      void fetchCourse()
+    } else {
+      toast.error(result.error)
+    }
+    setSaving(false)
+  }
+
+  // ── Add lesson (creates Mux upload) ─────────────────────────────────────
+  async function handleAddLesson(sectionId: string) {
+    if (!newLessonTitle.trim()) return
+    setSaving(true)
+
+    const result = await apiFetch<{
+      lesson: Lesson
+      muxUploadUrl: string
+      muxUploadId: string
+    }>(`/api/courses/${courseId}/sections/${sectionId}/lessons`, {
+      method: 'POST',
+      body: JSON.stringify({ title: newLessonTitle.trim(), isFreePreview: false }),
+    })
+
+    if (result.ok) {
+      toast.success('Lesson created. Use the upload button to add your video.')
+      setNewLessonTitle('')
+      setAddingLesson(null)
+      void fetchCourse()
+    } else {
+      toast.error(result.error)
+    }
+    setSaving(false)
+  }
+
+  // ── Publish / archive ────────────────────────────────────────────────────
+  async function handleStatusChange(status: 'PUBLISHED' | 'DRAFT' | 'ARCHIVED') {
+    setSaving(true)
+    const result = await apiFetch(`/api/courses/${courseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+
+    if (result.ok) {
+      toast.success(`Course ${status.toLowerCase()} successfully`)
+      void fetchCourse()
+    } else {
+      toast.error(result.error)
+    }
+    setSaving(false)
+  }
+
+  // ── Delete lesson ────────────────────────────────────────────────────────
+  async function handleDeleteLesson(lessonId: string) {
+    const confirmed = window.confirm('Delete this lesson? This cannot be undone.')
+    if (!confirmed) return
+
+    const result = await apiFetch(`/api/lessons/${lessonId}`, { method: 'DELETE' })
+    if (result.ok) {
+      toast.success('Lesson deleted')
+      void fetchCourse()
+    } else {
+      toast.error(result.error)
+    }
+  }
+
+  if (!ready) return <FullPageSkeleton />
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-4 w-96" />
+        <div className="space-y-3">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+        </div>
+      </div>
+    )
+  }
+
+  if (!course) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-sm text-gray-500">Course not found.</p>
+        <Link href="/dashboard/tutor/courses" className="mt-4 text-sm text-indigo-600 hover:underline">
+          Back to courses
+        </Link>
+      </div>
+    )
+  }
+
+  const readyLessons = course.curriculum.flatMap((s) => s.lessons).filter((l) => l.muxAssetStatus === 'READY').length
+  const canPublish = course.totalLessons > 0 && readyLessons > 0
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <Link
+            href="/dashboard/tutor/courses"
+            className="mb-2 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            My Courses
+          </Link>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-xl font-bold text-gray-900 truncate">{course.title}</h1>
+            <Badge variant={STATUS_BADGE[course.status] ?? 'outline'}>{course.status}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            {course.totalLessons} lesson{course.totalLessons !== 1 ? 's' : ''} ·{' '}
+            {course.totalEnrollments} enrolled ·{' '}
+            {course.priceKobo === 0 ? 'Free' : formatNaira(course.priceKobo)}
+            {course.totalDurationSeconds > 0 && ` · ${formatDuration(course.totalDurationSeconds)}`}
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex shrink-0 items-center gap-2">
+          {course.status === 'DRAFT' && (
+            <button
+              onClick={() => handleStatusChange('PUBLISHED')}
+              disabled={!canPublish || saving}
+              title={!canPublish ? 'Add at least one ready lesson before publishing' : ''}
+              className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
+            >
+              <Globe className="h-4 w-4" aria-hidden="true" />
+              Publish
+            </button>
+          )}
+          {course.status === 'PUBLISHED' && (
+            <button
+              onClick={() => handleStatusChange('DRAFT')}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Unpublish
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Curriculum builder */}
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Curriculum</h2>
+          <button
+            onClick={() => setShowAddSection(true)}
+            className="flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-500"
+          >
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            Add Section
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {course.curriculum.map((section) => {
+            const isExpanded = expandedSections.has(section.id)
+            return (
+              <div key={section.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+                {/* Section header */}
+                <button
+                  type="button"
+                  onClick={() => setExpandedSections((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(section.id)) next.delete(section.id)
+                    else next.add(section.id)
+                    return next
+                  })}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                >
+                  {isExpanded
+                    ? <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
+                  }
+                  <span className="flex-1 text-sm font-semibold text-gray-900">{section.title}</span>
+                  <span className="text-xs text-gray-400">{section.lessons.length} lesson{section.lessons.length !== 1 ? 's' : ''}</span>
+                </button>
+
+                {/* Lessons */}
+                {isExpanded && (
+                  <div className="border-t border-gray-100">
+                    {section.lessons.length === 0 ? (
+                      <p className="px-10 py-3 text-xs text-gray-400">No lessons yet. Add one below.</p>
+                    ) : (
+                      <ul className="divide-y divide-gray-100">
+                        {section.lessons.map((lesson) => (
+                          <li key={lesson.id} className="flex items-center gap-3 px-10 py-3">
+                            <MuxStatusIcon status={lesson.muxAssetStatus} />
+                            <Video className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
+                            <span className="flex-1 text-sm text-gray-700">{lesson.title}</span>
+                            {lesson.isFreePreview && (
+                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                                Free preview
+                              </span>
+                            )}
+                            {lesson.durationSeconds > 0 && (
+                              <span className="text-xs text-gray-400">
+                                {formatDuration(lesson.durationSeconds)}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => handleDeleteLesson(lesson.id)}
+                              className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                              aria-label={`Delete lesson ${lesson.title}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {/* Add lesson form */}
+                    {addingLesson === section.id ? (
+                      <div className="border-t border-gray-100 px-10 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={newLessonTitle}
+                            onChange={(e) => setNewLessonTitle(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void handleAddLesson(section.id) }}
+                            placeholder="Lesson title…"
+                            autoFocus
+                            className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <button
+                            onClick={() => void handleAddLesson(section.id)}
+                            disabled={saving || !newLessonTitle.trim()}
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                          >
+                            {saving ? '…' : 'Add'}
+                          </button>
+                          <button
+                            onClick={() => { setAddingLesson(null); setNewLessonTitle('') }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="border-t border-gray-100 px-10 py-2">
+                        <button
+                          onClick={() => { setAddingLesson(section.id); setNewLessonTitle('') }}
+                          className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-500"
+                        >
+                          <PlusCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                          Add Lesson
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Add section form */}
+          {showAddSection && (
+            <form onSubmit={handleAddSection} className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+              <p className="mb-2 text-sm font-semibold text-indigo-800">New Section</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={addingSectionTitle}
+                  onChange={(e) => setAddingSectionTitle(e.target.value)}
+                  placeholder="Section title…"
+                  autoFocus
+                  className="flex-1 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="submit"
+                  disabled={saving || !addingSectionTitle.trim()}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {saving ? '…' : 'Add'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowAddSection(false); setAddingSectionTitle('') }}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {course.curriculum.length === 0 && !showAddSection && (
+            <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-12 text-center">
+              <FileText className="mb-3 h-10 w-10 text-gray-300" aria-hidden="true" />
+              <p className="text-sm font-medium text-gray-700">No sections yet</p>
+              <p className="mt-1 text-xs text-gray-400">Add a section to start building your curriculum</p>
+              <button
+                onClick={() => setShowAddSection(true)}
+                className="mt-4 flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+              >
+                <PlusCircle className="h-4 w-4" aria-hidden="true" />
+                Add First Section
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Video processing note */}
+      {course.totalLessons > 0 && readyLessons < course.totalLessons && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm text-amber-800">
+            <span className="font-semibold">⏳ {course.totalLessons - readyLessons} video{course.totalLessons - readyLessons !== 1 ? 's' : ''} processing.</span>{' '}
+            Mux is transcoding your uploads. This usually takes 1–5 minutes. Refresh to check status.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,78 @@
+import type { Metadata, Viewport } from 'next'
+import { Toaster } from 'sonner'
+import { AuthProviderWrapper } from '@/components/auth/auth-provider-wrapper'
+import { NotificationProvider } from '@/components/notifications/notification-provider'
+import './globals.css'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const metadata: Metadata = {
+  title: {
+    template: '%s | StreamLearn',
+    default: 'StreamLearn — Learn Without Limits',
+  },
+  description:
+    'Production-grade e-learning platform for Nigerian universities. ' +
+    'Optimised for low-bandwidth 3G networks.',
+  metadataBase: new URL(
+    process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000',
+  ),
+  openGraph: {
+    type: 'website',
+    locale: 'en_NG',
+    siteName: 'StreamLearn',
+  },
+  twitter: {
+    card: 'summary_large_image',
+  },
+  robots: {
+    index: process.env['NODE_ENV'] === 'production',
+    follow: process.env['NODE_ENV'] === 'production',
+  },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#4f46e5',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Root Layout
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      {/*
+        No external font imports — system font stack only.
+        This is intentional: loading web fonts on 3G adds 100-400ms latency.
+        The system stack (Segoe UI on Windows, SF Pro on macOS/iOS,
+        Roboto on Android) looks excellent and loads instantly.
+      */}
+      <body className="min-h-screen bg-background font-sans antialiased">
+        <AuthProviderWrapper>
+          <NotificationProvider>
+            {children}
+            <Toaster
+              position="bottom-right"
+              richColors
+              closeButton
+              duration={4000}
+              toastOptions={{
+                classNames: { toast: 'font-sans text-sm' },
+              }}
+            />
+          </NotificationProvider>
+        </AuthProviderWrapper>
+      </body>
+    </html>
+  )
+}

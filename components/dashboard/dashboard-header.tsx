@@ -15,7 +15,7 @@ export function DashboardHeader({ onMenuClick }: Props) {
         {/* Mobile menu button */}
         <button
           onClick={onMenuClick}
-          className="rounded-md p-1.5 hover:bg-gray-100 lg:hidden"
+          className="rounded-md p-1.5 hover:bg-gray-100 "
           aria-label="Open menu"
         >
           <Menu className="h-5 w-5 text-gray-600" />

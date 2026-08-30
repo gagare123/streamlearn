@@ -1,7 +1,7 @@
 import { db, certificates, courses } from '@db/index'
 import { eq } from 'drizzle-orm'
 import { requireIdentity, requireOwnerOrAdmin } from '@lib/rbac'
-import { handleRouteError, Errors } from '@lib/errors'
+import {  Errors } from '@lib/errors'
 import { getR2Client } from '@lib/r2'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { env } from '@lib/env'

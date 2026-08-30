@@ -11,13 +11,20 @@ import { BookOpen, Users, DollarSign, PlusCircle, Eye, ClipboardList, ArrowRight
 import { formatNaira } from '@/lib/utils'
 
 type Course = {
-  id: string; title: string
+  id: string
+  title: string
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
-  totalLessons: number; totalEnrollments: number; priceKobo: number
+  totalLessons: number
+  totalEnrollments: number
+  priceKobo: number
 }
+
 type CoursesResponse = { courses: Course[]; pagination: { total: number } }
+
 const STATUS_BADGE: Record<string, 'success' | 'secondary' | 'outline'> = {
-  PUBLISHED: 'success', DRAFT: 'secondary', ARCHIVED: 'outline',
+  PUBLISHED: 'success',
+  DRAFT: 'secondary',
+  ARCHIVED: 'outline',
 }
 
 export default function TutorDashboardPage() {
@@ -30,7 +37,12 @@ export default function TutorDashboardPage() {
   useEffect(() => {
     if (!ready) return
     void apiFetch<CoursesResponse>('/api/courses?limit=5').then((r) => {
-      if (r.ok) { setCourses(r.data.courses); setTotal(r.data.pagination.total) }
+      if (r.ok) {
+        // Filter out any courses with missing IDs
+        const validCourses = (r.data.courses ?? []).filter((c) => c && c.id)
+        setCourses(validCourses)
+        setTotal(r.data.pagination?.total ?? 0)
+      }
       setLoading(false)
     })
   }, [ready, apiFetch])
@@ -38,46 +50,56 @@ export default function TutorDashboardPage() {
   if (!ready) return <FullPageSkeleton />
 
   const published = courses.filter((c) => c.status === 'PUBLISHED').length
-  const totalStudents = courses.reduce((s, c) => s + c.totalEnrollments, 0)
-  const totalRevenue = courses.reduce((s, c) => s + c.priceKobo * c.totalEnrollments, 0)
+  const totalStudents = courses.reduce((s, c) => s + (c.totalEnrollments || 0), 0)
+  const totalRevenue = courses.reduce((s, c) => s + (c.priceKobo || 0) * (c.totalEnrollments || 0), 0)
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">Tutor Dashboard</h1>
-          <p className="mt-1 text-sm text-gray-500">Welcome back, {user.name.split(' ')[0]}.</p>
+          <p className="mt-1 text-sm text-gray-500">Welcome back, {user?.name?.split(' ')[0] || 'there'}.</p>
         </div>
-        <Link href="/dashboard/tutor/courses/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors">
-          <PlusCircle className="h-4 w-4" />New Course
+        <Link
+          href="/dashboard/tutor/courses/new"
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+        >
+          <PlusCircle className="h-4 w-4" />
+          New Course
         </Link>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {loading ? Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="rounded-lg border border-gray-200 bg-white p-4">
-            <Skeleton className="mb-3 h-8 w-8 rounded-lg" />
-            <Skeleton className="mb-1 h-7 w-16" />
-            <Skeleton className="h-3 w-24" />
-          </div>
-        )) : ([
-          { icon: BookOpen,     bg: 'bg-indigo-50', col: 'text-indigo-600', v: String(total),                label: 'Total Courses',  sub: published + ' published' },
-          { icon: Users,        bg: 'bg-blue-50',   col: 'text-blue-600',   v: String(totalStudents),         label: 'Total Students', sub: 'across all courses' },
-          { icon: DollarSign,   bg: 'bg-green-50',  col: 'text-green-600',  v: formatNaira(totalRevenue),     label: 'Est. Revenue',   sub: 'cumulative' },
-          { icon: ClipboardList,bg: 'bg-amber-50',  col: 'text-amber-600',  v: String(courses.filter(c=>c.status==='DRAFT').length), label: 'Drafts', sub: 'in progress' },
-        ] as const).map(({ icon: Icon, bg, col, v, label, sub }) => (
-          <div key={label} className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className={'flex h-9 w-9 items-center justify-center rounded-lg ' + bg}>
-              <Icon className={'h-5 w-5 ' + col} />
+        {loading ? (
+          Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="rounded-lg border border-gray-200 bg-white p-4">
+              <Skeleton className="mb-3 h-8 w-8 rounded-lg" />
+              <Skeleton className="mb-1 h-7 w-16" />
+              <Skeleton className="h-3 w-24" />
             </div>
-            <p className="mt-3 text-2xl font-bold text-gray-900">{v}</p>
-            <p className="text-xs text-gray-500">{label}</p>
-            <p className="mt-0.5 text-xs text-gray-400">{sub}</p>
-          </div>
-        ))}
+          ))
+        ) : (
+          [
+            { icon: BookOpen, bg: 'bg-indigo-50', col: 'text-indigo-600', v: String(total), label: 'Total Courses', sub: `${published} published` },
+            { icon: Users, bg: 'bg-blue-50', col: 'text-blue-600', v: String(totalStudents), label: 'Total Students', sub: 'across all courses' },
+            { icon: DollarSign, bg: 'bg-green-50', col: 'text-green-600', v: formatNaira(totalRevenue), label: 'Est. Revenue', sub: 'cumulative' },
+            { icon: ClipboardList, bg: 'bg-amber-50', col: 'text-amber-600', v: String(courses.filter((c) => c.status === 'DRAFT').length), label: 'Drafts', sub: 'in progress' },
+          ].map(({ icon: Icon, bg, col, v, label, sub }) => (
+            <div key={label} className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${bg}`}>
+                <Icon className={`h-5 w-5 ${col}`} />
+              </div>
+              <p className="mt-3 text-2xl font-bold text-gray-900">{v}</p>
+              <p className="text-xs text-gray-500">{label}</p>
+              <p className="mt-0.5 text-xs text-gray-400">{sub}</p>
+            </div>
+          ))
+        )}
       </div>
 
+      {/* My Courses */}
       <section>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-900">My Courses</h2>
@@ -91,7 +113,10 @@ export default function TutorDashboardPage() {
               {Array.from({ length: 4 }, (_, i) => (
                 <div key={i} className="flex items-center gap-4 px-5 py-4">
                   <Skeleton className="h-10 w-10 rounded-lg" />
-                  <div className="flex-1 space-y-1.5"><Skeleton className="h-4 w-48" /><Skeleton className="h-3 w-32" /></div>
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
                   <Skeleton className="h-6 w-16 rounded-full" />
                   <Skeleton className="h-8 w-20 rounded-md" />
                 </div>
@@ -118,10 +143,15 @@ export default function TutorDashboardPage() {
                       {course.totalLessons} lesson{course.totalLessons !== 1 ? 's' : ''} · {course.totalEnrollments} enrolled · {course.priceKobo === 0 ? 'Free' : formatNaira(course.priceKobo)}
                     </p>
                   </div>
-                  <Badge variant={STATUS_BADGE[course.status] ?? 'outline'} className="shrink-0 text-[10px]">{course.status}</Badge>
-                  <Link href={'/dashboard/tutor/courses/' + course.id}
-                    className="shrink-0 flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors">
-                    <Eye className="h-3 w-3" />Manage
+                  <Badge variant={STATUS_BADGE[course.status] ?? 'outline'} className="shrink-0 text-[10px]">
+                    {course.status}
+                  </Badge>
+                  <Link
+                    href={course.id ? `/dashboard/tutor/courses/${course.id}` : '#'}
+                    className="shrink-0 flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                  >
+                    <Eye className="h-3 w-3" />
+                    Manage
                   </Link>
                 </li>
               ))}
@@ -130,6 +160,7 @@ export default function TutorDashboardPage() {
         </div>
       </section>
 
+      {/* Quick Actions */}
       <section>
         <h2 className="mb-4 text-base font-semibold text-gray-900">Quick Actions</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -139,8 +170,11 @@ export default function TutorDashboardPage() {
             { label: 'Students', href: '/dashboard/tutor/students', icon: Users },
             { label: 'Quizzes', href: '/dashboard/tutor/quizzes', icon: ClipboardList },
           ].map(({ label, href, icon: Icon }) => (
-            <Link key={label} href={href}
-              className="flex flex-col items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-4 text-center text-sm font-medium text-gray-700 transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">
+            <Link
+              key={label}
+              href={href}
+              className="flex flex-col items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-4 text-center text-sm font-medium text-gray-700 transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+            >
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
                 <Icon className="h-5 w-5 text-gray-500" />
               </div>

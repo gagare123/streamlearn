@@ -9,10 +9,10 @@ import { FullPageSkeleton } from '@/components/auth/full-page-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { formatNaira, formatDuration, nairaToKobo } from '@/lib/utils'
+import { formatNaira, formatDuration } from '@/lib/utils'
 import {
   ArrowLeft, PlusCircle, ChevronDown, ChevronRight,
-  Trash2, Edit, Globe, Archive, Video, FileText,
+  Trash2, Globe, Video, FileText,
   CheckCircle, Clock, AlertCircle, Upload,
 } from 'lucide-react'
 
@@ -81,6 +81,7 @@ export default function CourseEditorPage() {
   const { ready } = useAuthGuard({ roles: ['TUTOR', 'ADMIN'] })
   const { apiFetch } = useApiFetch()
   const params = useParams()
+  const router = useRouter()
   const courseId = params['id'] as string
 
   const [course, setCourse] = useState<CourseDetail | null>(null)
@@ -96,7 +97,6 @@ export default function CourseEditorPage() {
     const result = await apiFetch<{ course: CourseDetail }>(`/api/courses/${courseId}`)
     if (result.ok) {
       setCourse(result.data.course)
-      // Auto-expand all sections on first load
       setExpandedSections(new Set(result.data.course.curriculum.map((s) => s.id)))
     } else {
       toast.error(result.error)
@@ -111,12 +111,10 @@ export default function CourseEditorPage() {
     e.preventDefault()
     if (!addingSectionTitle.trim()) return
     setSaving(true)
-
     const result = await apiFetch(`/api/courses/${courseId}/sections`, {
       method: 'POST',
       body: JSON.stringify({ title: addingSectionTitle.trim() }),
     })
-
     if (result.ok) {
       toast.success('Section added')
       setAddingSectionTitle('')
@@ -128,22 +126,33 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Add lesson (creates Mux upload) ─────────────────────────────────────
+  // ── Delete section ───────────────────────────────────────────────────────
+  async function handleDeleteSection(sectionId: string) {
+    if (!confirm('Delete this section and all its lessons? This cannot be undone.')) return
+    setSaving(true)
+    const res = await apiFetch(`/api/courses/${courseId}/sections`, {
+      method: 'DELETE',
+      body: JSON.stringify({ sectionId }),
+    })
+    if (res.ok) {
+      toast.success('Section deleted')
+      void fetchCourse()
+    } else {
+      toast.error(res.error || 'Failed to delete')
+    }
+    setSaving(false)
+  }
+
+  // ── Add lesson ───────────────────────────────────────────────────────────
   async function handleAddLesson(sectionId: string) {
     if (!newLessonTitle.trim()) return
     setSaving(true)
-
-    const result = await apiFetch<{
-      lesson: Lesson
-      muxUploadUrl: string
-      muxUploadId: string
-    }>(`/api/courses/${courseId}/sections/${sectionId}/lessons`, {
+    const result = await apiFetch(`/api/courses/${courseId}/sections/${sectionId}/lessons`, {
       method: 'POST',
       body: JSON.stringify({ title: newLessonTitle.trim(), isFreePreview: false }),
     })
-
     if (result.ok) {
-      toast.success('Lesson created. Use the upload button to add your video.')
+      toast.success('Lesson created')
       setNewLessonTitle('')
       setAddingLesson(null)
       void fetchCourse()
@@ -153,6 +162,87 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
+  // ── Upload video to Mux ──────────────────────────────────────────────────
+  async function handleUploadVideo(lessonId: string) {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'video/*'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      toast.info('Preparing upload...')
+      const muxRes = await apiFetch<{ url: string; uploadId: string }>(
+        `/api/lessons/${lessonId}/upload`,
+        { method: 'POST' }
+      )
+      if (!muxRes.ok) {
+        toast.error(muxRes.error || 'Failed to get upload URL')
+        return
+      }
+      toast.info('Uploading video to Mux...')
+      const uploadRes = await fetch(muxRes.data.url, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+      })
+      if (!uploadRes.ok) {
+        toast.error('Video upload failed')
+        return
+      }
+      toast.success('Video uploaded! Mux is processing...')
+      void fetchCourse()
+    }
+    input.click()
+  }
+
+  // ── Upload attachment (PDF) ──────────────────────────────────────────────
+  async function handleUploadAttachment(lessonId: string) {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.pdf,.pptx,.docx,.txt'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      toast.info('Uploading attachment...')
+      const presignRes = await apiFetch<{ uploadUrl: string; key: string }>(
+        '/api/upload/presign',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            contentType: file.type,
+            target: 'lesson_attachment',
+            resourceId: lessonId,
+            fileSizeBytes: file.size,
+          }),
+        }
+      )
+      if (!presignRes.ok) {
+        toast.error(presignRes.error || 'Failed to get upload URL')
+        return
+      }
+      const uploadRes = await fetch(presignRes.data.uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+      })
+      if (!uploadRes.ok) {
+        toast.error('Upload failed')
+        return
+      }
+      const patchRes = await apiFetch(`/api/lessons/${lessonId}/attachment`, {
+        method: 'PATCH',
+        body: JSON.stringify({ r2Key: presignRes.data.key }),
+      })
+      if (patchRes.ok) {
+        toast.success('Attachment uploaded!')
+        void fetchCourse()
+      } else {
+        toast.error(patchRes.error || 'Failed to save attachment')
+      }
+    }
+    input.click()
+  }
+
   // ── Publish / archive ────────────────────────────────────────────────────
   async function handleStatusChange(status: 'PUBLISHED' | 'DRAFT' | 'ARCHIVED') {
     setSaving(true)
@@ -160,7 +250,6 @@ export default function CourseEditorPage() {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     })
-
     if (result.ok) {
       toast.success(`Course ${status.toLowerCase()} successfully`)
       void fetchCourse()
@@ -170,11 +259,23 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
+  // ── Delete course ────────────────────────────────────────────────────────
+  async function handleDeleteCourse() {
+    if (!confirm('Delete this course and all its sections, lessons, and enrollments? This cannot be undone.')) return
+    setSaving(true)
+    const res = await apiFetch(`/api/courses/${courseId}`, { method: 'DELETE' })
+    if (res.ok) {
+      toast.success('Course deleted')
+      router.push('/dashboard/tutor/courses')
+    } else {
+      toast.error(res.error || 'Failed to delete')
+    }
+    setSaving(false)
+  }
+
   // ── Delete lesson ────────────────────────────────────────────────────────
   async function handleDeleteLesson(lessonId: string) {
-    const confirmed = window.confirm('Delete this lesson? This cannot be undone.')
-    if (!confirmed) return
-
+    if (!confirm('Delete this lesson? This cannot be undone.')) return
     const result = await apiFetch(`/api/lessons/${lessonId}`, { method: 'DELETE' })
     if (result.ok) {
       toast.success('Lesson deleted')
@@ -217,10 +318,7 @@ export default function CourseEditorPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Link
-            href="/dashboard/tutor/courses"
-            className="mb-2 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900"
-          >
+          <Link href="/dashboard/tutor/courses" className="mb-2 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900">
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             My Courses
           </Link>
@@ -235,29 +333,37 @@ export default function CourseEditorPage() {
             {course.totalDurationSeconds > 0 && ` · ${formatDuration(course.totalDurationSeconds)}`}
           </p>
         </div>
-
-        {/* Actions */}
         <div className="flex shrink-0 items-center gap-2">
           {course.status === 'DRAFT' && (
-            <button
-              onClick={() => handleStatusChange('PUBLISHED')}
-              disabled={!canPublish || saving}
-              title={!canPublish ? 'Add at least one ready lesson before publishing' : ''}
-              className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
-            >
-              <Globe className="h-4 w-4" aria-hidden="true" />
-              Publish
+            <button onClick={() => handleStatusChange('PUBLISHED')} disabled={!canPublish || saving}
+              className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50 transition-colors">
+              <Globe className="h-4 w-4" /> Publish
             </button>
           )}
           {course.status === 'PUBLISHED' && (
-            <button
-              onClick={() => handleStatusChange('DRAFT')}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
+            <button onClick={() => handleStatusChange('DRAFT')} disabled={saving}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               Unpublish
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Danger Zone — Delete Course */}
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-red-800">Danger Zone</p>
+            <p className="text-xs text-red-600 mt-0.5">Delete this course and all its content permanently.</p>
+          </div>
+          <button
+            onClick={handleDeleteCourse}
+            disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors shrink-0"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete Course
+          </button>
         </div>
       </div>
 
@@ -265,12 +371,9 @@ export default function CourseEditorPage() {
       <div>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-900">Curriculum</h2>
-          <button
-            onClick={() => setShowAddSection(true)}
-            className="flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-500"
-          >
-            <PlusCircle className="h-4 w-4" aria-hidden="true" />
-            Add Section
+          <button onClick={() => setShowAddSection(true)}
+            className="flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-500">
+            <PlusCircle className="h-4 w-4" /> Add Section
           </button>
         </div>
 
@@ -280,23 +383,22 @@ export default function CourseEditorPage() {
             return (
               <div key={section.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
                 {/* Section header */}
-                <button
-                  type="button"
-                  onClick={() => setExpandedSections((prev) => {
+                <div className="flex w-full items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                  <button type="button" onClick={() => setExpandedSections((prev) => {
                     const next = new Set(prev)
                     if (next.has(section.id)) next.delete(section.id)
                     else next.add(section.id)
                     return next
-                  })}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
-                >
-                  {isExpanded
-                    ? <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
-                    : <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
-                  }
-                  <span className="flex-1 text-sm font-semibold text-gray-900">{section.title}</span>
-                  <span className="text-xs text-gray-400">{section.lessons.length} lesson{section.lessons.length !== 1 ? 's' : ''}</span>
-                </button>
+                  })} className="flex flex-1 items-center gap-3 text-left">
+                    {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />}
+                    <span className="flex-1 text-sm font-semibold text-gray-900">{section.title}</span>
+                    <span className="text-xs text-gray-400">{section.lessons.length} lesson{section.lessons.length !== 1 ? 's' : ''}</span>
+                  </button>
+                  <button onClick={() => handleDeleteSection(section.id)} disabled={saving}
+                    className="flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors shrink-0">
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </button>
+                </div>
 
                 {/* Lessons */}
                 {isExpanded && (
@@ -308,24 +410,30 @@ export default function CourseEditorPage() {
                         {section.lessons.map((lesson) => (
                           <li key={lesson.id} className="flex items-center gap-3 px-10 py-3">
                             <MuxStatusIcon status={lesson.muxAssetStatus} />
-                            <Video className="h-4 w-4 text-gray-400 shrink-0" aria-hidden="true" />
+                            <Video className="h-4 w-4 text-gray-400 shrink-0" />
                             <span className="flex-1 text-sm text-gray-700">{lesson.title}</span>
                             {lesson.isFreePreview && (
-                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                                Free preview
-                              </span>
+                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Free preview</span>
                             )}
                             {lesson.durationSeconds > 0 && (
-                              <span className="text-xs text-gray-400">
-                                {formatDuration(lesson.durationSeconds)}
-                              </span>
+                              <span className="text-xs text-gray-400">{formatDuration(lesson.durationSeconds)}</span>
                             )}
-                            <button
-                              onClick={() => handleDeleteLesson(lesson.id)}
-                              className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
-                              aria-label={`Delete lesson ${lesson.title}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            {/* Upload video */}
+                            <button onClick={() => handleUploadVideo(lesson.id)}
+                              className="flex items-center gap-1 rounded-md border border-purple-200 px-2 py-1 text-xs font-medium text-purple-600 hover:bg-purple-50 transition-colors shrink-0"
+                              title="Upload video">
+                              <Upload className="h-3.5 w-3.5" /> Video
+                            </button>
+                            {/* Upload PDF */}
+                            <button onClick={() => handleUploadAttachment(lesson.id)}
+                              className="flex items-center gap-1 rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors shrink-0"
+                              title="Upload PDF/slides">
+                              <FileText className="h-3.5 w-3.5" /> PDF
+                            </button>
+                            {/* Delete lesson */}
+                            <button onClick={() => handleDeleteLesson(lesson.id)}
+                              className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </li>
                         ))}
@@ -336,38 +444,23 @@ export default function CourseEditorPage() {
                     {addingLesson === section.id ? (
                       <div className="border-t border-gray-100 px-10 py-3">
                         <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={newLessonTitle}
-                            onChange={(e) => setNewLessonTitle(e.target.value)}
+                          <input type="text" value={newLessonTitle} onChange={(e) => setNewLessonTitle(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') void handleAddLesson(section.id) }}
-                            placeholder="Lesson title…"
-                            autoFocus
-                            className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          />
-                          <button
-                            onClick={() => void handleAddLesson(section.id)}
-                            disabled={saving || !newLessonTitle.trim()}
-                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                          >
+                            placeholder="Lesson title…" autoFocus
+                            className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                          <button onClick={() => void handleAddLesson(section.id)} disabled={saving || !newLessonTitle.trim()}
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
                             {saving ? '…' : 'Add'}
                           </button>
-                          <button
-                            onClick={() => { setAddingLesson(null); setNewLessonTitle('') }}
-                            className="text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            Cancel
-                          </button>
+                          <button onClick={() => { setAddingLesson(null); setNewLessonTitle('') }}
+                            className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
                         </div>
                       </div>
                     ) : (
                       <div className="border-t border-gray-100 px-10 py-2">
-                        <button
-                          onClick={() => { setAddingLesson(section.id); setNewLessonTitle('') }}
-                          className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-500"
-                        >
-                          <PlusCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                          Add Lesson
+                        <button onClick={() => { setAddingLesson(section.id); setNewLessonTitle('') }}
+                          className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-500">
+                          <PlusCircle className="h-3.5 w-3.5" /> Add Lesson
                         </button>
                       </div>
                     )}
@@ -382,43 +475,27 @@ export default function CourseEditorPage() {
             <form onSubmit={handleAddSection} className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
               <p className="mb-2 text-sm font-semibold text-indigo-800">New Section</p>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={addingSectionTitle}
-                  onChange={(e) => setAddingSectionTitle(e.target.value)}
-                  placeholder="Section title…"
-                  autoFocus
-                  className="flex-1 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="submit"
-                  disabled={saving || !addingSectionTitle.trim()}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
+                <input type="text" value={addingSectionTitle} onChange={(e) => setAddingSectionTitle(e.target.value)}
+                  placeholder="Section title…" autoFocus
+                  className="flex-1 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <button type="submit" disabled={saving || !addingSectionTitle.trim()}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
                   {saving ? '…' : 'Add'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowAddSection(false); setAddingSectionTitle('') }}
-                  className="text-sm text-gray-500 hover:text-gray-700"
-                >
-                  Cancel
-                </button>
+                <button type="button" onClick={() => { setShowAddSection(false); setAddingSectionTitle('') }}
+                  className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
               </div>
             </form>
           )}
 
           {course.curriculum.length === 0 && !showAddSection && (
             <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-12 text-center">
-              <FileText className="mb-3 h-10 w-10 text-gray-300" aria-hidden="true" />
+              <FileText className="mb-3 h-10 w-10 text-gray-300" />
               <p className="text-sm font-medium text-gray-700">No sections yet</p>
               <p className="mt-1 text-xs text-gray-400">Add a section to start building your curriculum</p>
-              <button
-                onClick={() => setShowAddSection(true)}
-                className="mt-4 flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-              >
-                <PlusCircle className="h-4 w-4" aria-hidden="true" />
-                Add First Section
+              <button onClick={() => setShowAddSection(true)}
+                className="mt-4 flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+                <PlusCircle className="h-4 w-4" /> Add First Section
               </button>
             </div>
           )}
@@ -437,3 +514,6 @@ export default function CourseEditorPage() {
     </div>
   )
 }
+
+
+

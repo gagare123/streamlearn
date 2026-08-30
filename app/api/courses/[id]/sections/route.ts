@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { db, courses, courseSections } from '@db/index'
-import { eq, asc, max, sql } from 'drizzle-orm'
+import { db, courses, courseSections, lessons} from '@db/index'
+import { eq, asc, max } from 'drizzle-orm'
 import { requireTutor, requireOwnerOrAdmin } from '@/lib/rbac'
 import { handleRouteError, Errors } from '@/lib/errors'
 import { redis, RedisKeys } from '@/lib/redis'
@@ -80,6 +80,55 @@ export async function POST(request: Request, { params }: Params): Promise<NextRe
     await redis.del(RedisKeys.courseDetailCache(id))
 
     return NextResponse.json({ success: true, data: { section } }, { status: 201 })
+  } catch (err) {
+    return handleRouteError(err)
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/courses/[id]/sections — delete a section (by sectionId in body)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const deleteSchema = z.object({
+  sectionId: z.string().uuid(),
+})
+
+export async function DELETE(request: Request, { params }: Params): Promise<NextResponse> {
+  try {
+    const identity = requireTutor(request)
+    const { id: courseId } = await params
+
+    let body: unknown
+    try { body = await request.json() } catch { throw Errors.badRequest('Invalid JSON') }
+
+    const parsed = deleteSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid sectionId' },
+        { status: 400 },
+      )
+    }
+
+    const { sectionId } = parsed.data
+
+    // Verify ownership
+    const [course] = await db
+      .select({ tutorId: courses.tutorId })
+      .from(courses)
+      .where(eq(courses.id, courseId))
+      .limit(1)
+
+    if (!course) throw Errors.notFound('Course')
+    requireOwnerOrAdmin(identity, course.tutorId)
+
+    // Delete lessons in section first, then section
+    await db.delete(lessons).where(eq(lessons.sectionId, sectionId))
+    await db.delete(courseSections).where(eq(courseSections.id, sectionId))
+
+    await redis.del(RedisKeys.courseDetailCache(courseId))
+
+    return NextResponse.json({ success: true, data: { message: 'Section deleted' } })
   } catch (err) {
     return handleRouteError(err)
   }

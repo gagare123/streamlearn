@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server'
 import { db } from '@db/index'
+import { sql } from 'drizzle-orm'
 import { requireAdmin } from '@lib/rbac'
 import { handleRouteError } from '@lib/errors'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/admin/stats
-// Returns platform-wide aggregates. ADMIN only.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
@@ -17,7 +13,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const now = new Date()
     const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    const d7  = new Date(now.getTime() -  7 * 24 * 60 * 60 * 1000)
+    const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
     const [
       userStats,
@@ -30,95 +26,55 @@ export async function GET(request: Request): Promise<NextResponse> {
       dailySignups,
       topCourses,
     ] = await Promise.all([
-
-      // Users by role
-      db.execute(`
-        SELECT role, COUNT(*)::int AS cnt
-        FROM users GROUP BY role
-      ` as any),
-
-      // Courses by status
-      db.execute(`
-        SELECT status, COUNT(*)::int AS cnt
-        FROM courses GROUP BY status
-      ` as any),
-
-      // Enrollments by status
-      db.execute(`
-        SELECT status, COUNT(*)::int AS cnt
-        FROM enrollments GROUP BY status
-      ` as any),
-
-      // Total revenue
-      db.execute(`
-        SELECT COALESCE(SUM(amount_kobo), 0)::bigint AS total
-        FROM payments WHERE status = 'SUCCESS'
-      ` as any),
-
-    // New users last 30 days
-      db.execute(`
-        SELECT COUNT(*)::int AS cnt FROM users WHERE created_at >= '${d30.toISOString()}'
-      ` as any),
-
-      // New users last 7 days
-      db.execute(`
-        SELECT COUNT(*)::int AS cnt FROM users WHERE created_at >= '${d7.toISOString()}'
-      ` as any),
-
-      // Recent audit activity (last 15 events)
-      db.execute(`
+      db.execute(sql`SELECT role, COUNT(*)::int AS cnt FROM users GROUP BY role`),
+      db.execute(sql`SELECT status, COUNT(*)::int AS cnt FROM courses GROUP BY status`),
+      db.execute(sql`SELECT status, COUNT(*)::int AS cnt FROM enrollments GROUP BY status`),
+      db.execute(sql`SELECT COALESCE(SUM(amount_kobo), 0)::bigint AS total FROM payments WHERE status = 'SUCCESS'`),
+      db.execute(sql`SELECT COUNT(*)::int AS cnt FROM users WHERE created_at >= ${d30.toISOString()}`),
+      db.execute(sql`SELECT COUNT(*)::int AS cnt FROM users WHERE created_at >= ${d7.toISOString()}`),
+      db.execute(sql`
         SELECT al.id, al.action, al.created_at,
                u.name AS actor_name, u.email AS actor_email
         FROM audit_logs al
         LEFT JOIN users u ON al.actor_id = u.id
         ORDER BY al.created_at DESC
         LIMIT 15
-      ` as any),
-
-      // Daily signups last 14 days
-      db.execute(`
+      `),
+      db.execute(sql`
         SELECT DATE(created_at) AS day, COUNT(*)::int AS cnt
         FROM users
         WHERE created_at >= NOW() - INTERVAL '14 days'
         GROUP BY DATE(created_at)
         ORDER BY day ASC
-      ` as any),
-
-      // Top 5 courses by enrollment
-      db.execute(`
+      `),
+      db.execute(sql`
         SELECT c.id, c.title, c.total_enrollments,
-               c.price_kobo,
-               u.name AS tutor_name
+               c.price_kobo, u.name AS tutor_name
         FROM courses c
         JOIN users u ON c.tutor_id = u.id
         WHERE c.status = 'PUBLISHED'
         ORDER BY c.total_enrollments DESC
         LIMIT 5
-      ` as any),
+      `),
     ])
 
-    // Shape user stats
+    // postgres-js returns rows directly (not .rows)
+    const userRows = userStats as unknown as Array<{ role: string; cnt: number }>
     const userByRole: Record<string, number> = {}
-    for (const row of (userStats as any).rows ?? []) {
-      userByRole[row.role] = row.cnt
-    }
+    for (const row of userRows) if (row.role) userByRole[row.role] = Number(row.cnt)
     const totalUsers = Object.values(userByRole).reduce((a, b) => a + b, 0)
 
-    // Shape course stats
+    const courseRows = courseStats as unknown as Array<{ status: string; cnt: number }>
     const courseByStatus: Record<string, number> = {}
-    for (const row of (courseStats as any).rows ?? []) {
-      courseByStatus[row.status] = row.cnt
-    }
+    for (const row of courseRows) if (row.status) courseByStatus[row.status] = Number(row.cnt)
     const totalCourses = Object.values(courseByStatus).reduce((a, b) => a + b, 0)
 
-    // Shape enrollment stats
+    const enrollRows = enrollmentStats as unknown as Array<{ status: string; cnt: number }>
     const enrollByStatus: Record<string, number> = {}
-    for (const row of (enrollmentStats as any).rows ?? []) {
-      enrollByStatus[row.status] = row.cnt
-    }
+    for (const row of enrollRows) if (row.status) enrollByStatus[row.status] = Number(row.cnt)
     const totalEnrollments = Object.values(enrollByStatus).reduce((a, b) => a + b, 0)
 
-    const totalRevenueKobo = Number((revenueRow as any).rows?.[0]?.total ?? 0)
+    const revenueTotal = Number((revenueRow as unknown as Array<{ total: number }>)[0]?.total ?? 0)
 
     return NextResponse.json({
       success: true,
@@ -126,18 +82,18 @@ export async function GET(request: Request): Promise<NextResponse> {
         users: {
           total: totalUsers,
           byRole: userByRole,
-          newThisMonth: (newThisMonth as any).rows?.[0]?.cnt ?? 0,
-          newThisWeek:  (newThisWeek as any).rows?.[0]?.cnt ?? 0,
+          newThisMonth: Number((newThisMonth as unknown as Array<{ cnt: number }>)[0]?.cnt ?? 0),
+          newThisWeek: Number((newThisWeek as unknown as Array<{ cnt: number }>)[0]?.cnt ?? 0),
         },
         courses: { total: totalCourses, byStatus: courseByStatus },
         enrollments: { total: totalEnrollments, byStatus: enrollByStatus },
         revenue: {
-          totalKobo: totalRevenueKobo,
-          totalNaira: (totalRevenueKobo / 100).toFixed(2),
+          totalKobo: revenueTotal,
+          totalNaira: (revenueTotal / 100).toFixed(2),
         },
-        recentActivity: (recentActivity as any).rows ?? [],
-        dailySignups: (dailySignups as any).rows ?? [],
-        topCourses: (topCourses as any).rows ?? [],
+        recentActivity: recentActivity as unknown as Array<Record<string, unknown>>,
+        dailySignups: dailySignups as unknown as Array<Record<string, unknown>>,
+        topCourses: topCourses as unknown as Array<Record<string, unknown>>,
       },
     })
   } catch (err) {

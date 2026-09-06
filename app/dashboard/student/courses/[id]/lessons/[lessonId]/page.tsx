@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import { formatDuration } from '@/lib/utils'
 import {
   ChevronLeft, ChevronRight, CheckCircle,
-  Lock, PlayCircle, FileText, ArrowLeft,
+   PlayCircle, FileText, ArrowLeft,
 } from 'lucide-react'
 
 type LessonDetail = {

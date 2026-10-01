@@ -16,10 +16,6 @@ import {
   CheckCircle, Clock, AlertCircle, Upload,
 } from 'lucide-react'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
 type Lesson = {
   id: string
   title: string
@@ -28,6 +24,7 @@ type Lesson = {
   muxPlaybackId: string | null
   durationSeconds: number
   isFreePreview: boolean
+  attachmentR2Key: string | null
 }
 
 type Section = {
@@ -52,30 +49,18 @@ type CourseDetail = {
   tutor: { id: string; name: string }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mux status helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 function MuxStatusIcon({ status }: { status: Lesson['muxAssetStatus'] }) {
   switch (status) {
-    case 'READY':
-      return <CheckCircle className="h-4 w-4 text-green-500" aria-label="Ready" />
-    case 'PREPARING':
-      return <Clock className="h-4 w-4 text-amber-500 animate-pulse" aria-label="Processing" />
-    case 'ERRORED':
-      return <AlertCircle className="h-4 w-4 text-red-500" aria-label="Error" />
-    case 'WAITING':
-      return <Upload className="h-4 w-4 text-gray-400" aria-label="Awaiting upload" />
+    case 'READY': return <CheckCircle className="h-4 w-4 text-green-500" aria-label="Ready" />
+    case 'PREPARING': return <Clock className="h-4 w-4 text-amber-500 animate-pulse" aria-label="Processing" />
+    case 'ERRORED': return <AlertCircle className="h-4 w-4 text-red-500" aria-label="Error" />
+    case 'WAITING': return <Upload className="h-4 w-4 text-gray-400" aria-label="Awaiting upload" />
   }
 }
 
 const STATUS_BADGE: Record<string, 'success' | 'secondary' | 'outline'> = {
   PUBLISHED: 'success', DRAFT: 'secondary', ARCHIVED: 'outline',
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CourseEditorPage() {
   const { ready } = useAuthGuard({ roles: ['TUTOR', 'ADMIN'] })
@@ -92,6 +77,7 @@ export default function CourseEditorPage() {
   const [showAddSection, setShowAddSection] = useState(false)
   const [addingLesson, setAddingLesson] = useState<string | null>(null)
   const [newLessonTitle, setNewLessonTitle] = useState('')
+  const [uploadingId, setUploadingId] = useState<string | null>(null)
 
   const fetchCourse = useCallback(async () => {
     const result = await apiFetch<{ course: CourseDetail }>(`/api/courses/${courseId}`)
@@ -106,7 +92,6 @@ export default function CourseEditorPage() {
 
   useEffect(() => { if (ready) void fetchCourse() }, [ready, fetchCourse])
 
-  // ── Add section ──────────────────────────────────────────────────────────
   async function handleAddSection(e: FormEvent) {
     e.preventDefault()
     if (!addingSectionTitle.trim()) return
@@ -126,7 +111,6 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Delete section ───────────────────────────────────────────────────────
   async function handleDeleteSection(sectionId: string) {
     if (!confirm('Delete this section and all its lessons? This cannot be undone.')) return
     setSaving(true)
@@ -143,7 +127,6 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Add lesson ───────────────────────────────────────────────────────────
   async function handleAddLesson(sectionId: string) {
     if (!newLessonTitle.trim()) return
     setSaving(true)
@@ -162,7 +145,6 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Upload video to Mux ──────────────────────────────────────────────────
   async function handleUploadVideo(lessonId: string) {
     const input = document.createElement('input')
     input.type = 'file'
@@ -170,13 +152,15 @@ export default function CourseEditorPage() {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
-      toast.info('Preparing upload...')
+      setUploadingId(lessonId)
+      toast.info('Preparing video upload...')
       const muxRes = await apiFetch<{ url: string; uploadId: string }>(
         `/api/lessons/${lessonId}/upload`,
         { method: 'POST' }
       )
       if (!muxRes.ok) {
         toast.error(muxRes.error || 'Failed to get upload URL')
+        setUploadingId(null)
         return
       }
       toast.info('Uploading video to Mux...')
@@ -187,15 +171,16 @@ export default function CourseEditorPage() {
       })
       if (!uploadRes.ok) {
         toast.error('Video upload failed')
+        setUploadingId(null)
         return
       }
-      toast.success('Video uploaded! Mux is processing...')
+      toast.success('🎬 Video uploaded! Mux is processing...')
+      setUploadingId(null)
       void fetchCourse()
     }
     input.click()
   }
 
-  // ── Upload attachment (PDF) ──────────────────────────────────────────────
   async function handleUploadAttachment(lessonId: string) {
     const input = document.createElement('input')
     input.type = 'file'
@@ -203,7 +188,10 @@ export default function CourseEditorPage() {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
-      toast.info('Uploading attachment...')
+      setUploadingId(lessonId)
+
+      // Step 1: Get pre-signed URL
+      toast.info('📄 Preparing PDF upload...')
       const presignRes = await apiFetch<{ uploadUrl: string; key: string }>(
         '/api/upload/presign',
         {
@@ -218,32 +206,43 @@ export default function CourseEditorPage() {
       )
       if (!presignRes.ok) {
         toast.error(presignRes.error || 'Failed to get upload URL')
+        setUploadingId(null)
         return
       }
+
+      // Step 2: Upload to R2
+      toast.info('📄 Uploading file...')
       const uploadRes = await fetch(presignRes.data.uploadUrl, {
         method: 'PUT',
         body: file,
         headers: { 'Content-Type': file.type },
       })
       if (!uploadRes.ok) {
-        toast.error('Upload failed')
+        toast.error('❌ Upload failed — check R2 configuration')
+        setUploadingId(null)
         return
       }
+
+      // Step 3: Save to lesson
+      toast.info('📄 Saving attachment...')
       const patchRes = await apiFetch(`/api/lessons/${lessonId}/attachment`, {
         method: 'PATCH',
         body: JSON.stringify({ r2Key: presignRes.data.key }),
       })
       if (patchRes.ok) {
-        toast.success('Attachment uploaded!')
+        toast.success('📄 Attachment uploaded successfully!', {
+          duration: 5000,
+          description: 'Your PDF is now available for students to download.',
+        })
         void fetchCourse()
       } else {
         toast.error(patchRes.error || 'Failed to save attachment')
       }
+      setUploadingId(null)
     }
     input.click()
   }
 
-  // ── Publish / archive ────────────────────────────────────────────────────
   async function handleStatusChange(status: 'PUBLISHED' | 'DRAFT' | 'ARCHIVED') {
     setSaving(true)
     const result = await apiFetch(`/api/courses/${courseId}`, {
@@ -259,7 +258,6 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Delete course ────────────────────────────────────────────────────────
   async function handleDeleteCourse() {
     if (!confirm('Delete this course and all its sections, lessons, and enrollments? This cannot be undone.')) return
     setSaving(true)
@@ -273,7 +271,6 @@ export default function CourseEditorPage() {
     setSaving(false)
   }
 
-  // ── Delete lesson ────────────────────────────────────────────────────────
   async function handleDeleteLesson(lessonId: string) {
     if (!confirm('Delete this lesson? This cannot be undone.')) return
     const result = await apiFetch(`/api/lessons/${lessonId}`, { method: 'DELETE' })
@@ -349,25 +346,21 @@ export default function CourseEditorPage() {
         </div>
       </div>
 
-      {/* Danger Zone — Delete Course */}
+      {/* Danger Zone */}
       <div className="rounded-xl border border-red-200 bg-red-50 p-4">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-semibold text-red-800">Danger Zone</p>
             <p className="text-xs text-red-600 mt-0.5">Delete this course and all its content permanently.</p>
           </div>
-          <button
-            onClick={handleDeleteCourse}
-            disabled={saving}
-            className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors shrink-0"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete Course
+          <button onClick={handleDeleteCourse} disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors shrink-0">
+            <Trash2 className="h-4 w-4" /> Delete Course
           </button>
         </div>
       </div>
 
-      {/* Curriculum builder */}
+      {/* Curriculum */}
       <div>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-900">Curriculum</h2>
@@ -382,7 +375,6 @@ export default function CourseEditorPage() {
             const isExpanded = expandedSections.has(section.id)
             return (
               <div key={section.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-                {/* Section header */}
                 <div className="flex w-full items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
                   <button type="button" onClick={() => setExpandedSections((prev) => {
                     const next = new Set(prev)
@@ -400,7 +392,6 @@ export default function CourseEditorPage() {
                   </button>
                 </div>
 
-                {/* Lessons */}
                 {isExpanded && (
                   <div className="border-t border-gray-100">
                     {section.lessons.length === 0 ? (
@@ -412,25 +403,23 @@ export default function CourseEditorPage() {
                             <MuxStatusIcon status={lesson.muxAssetStatus} />
                             <Video className="h-4 w-4 text-gray-400 shrink-0" />
                             <span className="flex-1 text-sm text-gray-700">{lesson.title}</span>
+                            {lesson.attachmentR2Key && <FileText className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
                             {lesson.isFreePreview && (
                               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Free preview</span>
                             )}
                             {lesson.durationSeconds > 0 && (
                               <span className="text-xs text-gray-400">{formatDuration(lesson.durationSeconds)}</span>
                             )}
-                            {/* Upload video */}
-                            <button onClick={() => handleUploadVideo(lesson.id)}
+                            <button onClick={() => handleUploadVideo(lesson.id)} disabled={uploadingId === lesson.id}
                               className="flex items-center gap-1 rounded-md border border-purple-200 px-2 py-1 text-xs font-medium text-purple-600 hover:bg-purple-50 transition-colors shrink-0"
                               title="Upload video">
                               <Upload className="h-3.5 w-3.5" /> Video
                             </button>
-                            {/* Upload PDF */}
-                            <button onClick={() => handleUploadAttachment(lesson.id)}
+                            <button onClick={() => handleUploadAttachment(lesson.id)} disabled={uploadingId === lesson.id}
                               className="flex items-center gap-1 rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors shrink-0"
                               title="Upload PDF/slides">
                               <FileText className="h-3.5 w-3.5" /> PDF
                             </button>
-                            {/* Delete lesson */}
                             <button onClick={() => handleDeleteLesson(lesson.id)}
                               className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors">
                               <Trash2 className="h-3.5 w-3.5" />
@@ -440,7 +429,6 @@ export default function CourseEditorPage() {
                       </ul>
                     )}
 
-                    {/* Add lesson form */}
                     {addingLesson === section.id ? (
                       <div className="border-t border-gray-100 px-10 py-3">
                         <div className="flex items-center gap-2">
@@ -470,7 +458,6 @@ export default function CourseEditorPage() {
             )
           })}
 
-          {/* Add section form */}
           {showAddSection && (
             <form onSubmit={handleAddSection} className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
               <p className="mb-2 text-sm font-semibold text-indigo-800">New Section</p>
@@ -502,7 +489,6 @@ export default function CourseEditorPage() {
         </div>
       </div>
 
-      {/* Video processing note */}
       {course.totalLessons > 0 && readyLessons < course.totalLessons && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm text-amber-800">
@@ -514,6 +500,3 @@ export default function CourseEditorPage() {
     </div>
   )
 }
-
-
-

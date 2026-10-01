@@ -182,31 +182,20 @@ export default function LessonViewerPage() {
           </div>
         </div>
 
-        {/* Debug info */}
-    <div className="bg-yellow-100 border border-yellow-300 rounded p-2 text-xs">
-      Debug: muxPlaybackId={lesson.muxPlaybackId} | attachmentR2Key={lesson.attachmentR2Key}
-    </div>
-
-        {/* ACTION BUTTONS — ALWAYS VISIBLE */}
+              {/* PDF download button */}
+      {lesson.attachmentR2Key && (
         <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
-          <a
-            href={`/api/lessons/${lessonId}/video`}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
-          >
-            <PlayCircle className="h-4 w-4" aria-hidden="true" />
-            Watch Video
-          </a>
           <a
             href={`/api/lessons/${lessonId}/attachment`}
             download
             className="inline-flex items-center gap-2 rounded-lg border-2 border-blue-300 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
           >
             <FileText className="h-4 w-4" aria-hidden="true" />
-            Download PDF
+            Download PDF Materials
           </a>
         </div>
-
-        {/* Prev / Next */}
+      )}
+              {/* Prev / Next */}
         <div className="flex items-center justify-between border-t border-gray-100 pt-4">
           {prevLesson ? (
             <Link href={`/dashboard/student/courses/${courseId}/lessons/${prevLesson.id}`}

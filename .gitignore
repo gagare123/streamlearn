@@ -17,3 +17,4 @@ Thumbs.db
 /lib/generated/prisma
 cookies.txt
 tsconfig.tsbuildinfo
+.env.backup

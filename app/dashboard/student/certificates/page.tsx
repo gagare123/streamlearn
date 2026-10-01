@@ -3,20 +3,21 @@
 import { useState, useEffect } from 'react'
 import { useAuthGuard } from '@/hooks/use-auth-guard'
 import { useApiFetch } from '@/hooks/use-fetch'
-import { FullPageSkeleton } from '@components/auth/full-page-skeleton'
-import { Skeleton } from '@components/ui/skeleton'
+import { FullPageSkeleton } from '@/components/auth/full-page-skeleton'
+import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { Award, Download, BookOpen, Calendar } from 'lucide-react'
 
 type Certificate = {
   id: string
-  student_id: string
-  course_id: string
-  r2_key: string
-  issued_at: string
-  course_title: string
-  tutor_name: string
-  total_duration_seconds: number
+  studentId: string
+  courseId: string
+  r2Key: string
+  issuedAt: string
+  studentName: string
+  courseTitle: string
+  courseDuration: number
+  tutorName: string
 }
 
 function formatDuration(seconds: number): string {
@@ -30,9 +31,8 @@ function formatDuration(seconds: number): string {
 export default function StudentCertificatesPage() {
   const { ready }    = useAuthGuard({ roles: ['STUDENT'] })
   const { apiFetch } = useApiFetch()
-  const [certs, setCerts]       = useState<Certificate[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [downloading, setDown]  = useState<string | null>(null)
+  const [certs, setCerts]   = useState<Certificate[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!ready) return
@@ -43,34 +43,10 @@ export default function StudentCertificatesPage() {
     })
   }, [ready, apiFetch])
 
-  async function handleDownload(certId: string, courseTitle: string) {
-    setDown(certId)
-    try {
-      const res = await fetch(`/api/certificates/${certId}/download`, { credentials: 'include' })
-      if (!res.ok) { toast.error('Download failed'); return }
-
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      a.href     = url
-      a.download = `StreamLearn-Certificate-${courseTitle.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '-').slice(0, 40)}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-      toast.success('Certificate downloaded!')
-    } catch {
-      toast.error('Download failed. Please try again.')
-    } finally {
-      setDown(null)
-    }
-  }
-
   if (!ready) return <FullPageSkeleton />
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-gray-900">
           <Award className="h-6 w-6 text-amber-500" aria-hidden="true" />
@@ -109,64 +85,42 @@ export default function StudentCertificatesPage() {
               key={cert.id}
               className="relative overflow-hidden rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5 shadow-sm"
             >
-              {/* Background decoration */}
-              <div
-                className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-amber-200 opacity-30"
-                aria-hidden="true"
-              />
+              <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-amber-200 opacity-30" aria-hidden="true" />
 
-              {/* Icon */}
               <div className="relative mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
                 <Award className="h-6 w-6 text-amber-600" aria-hidden="true" />
               </div>
 
-              {/* Course info */}
               <h3 className="relative mb-1 text-sm font-bold text-gray-900 leading-snug line-clamp-2">
-                {cert.course_title}
+                {cert.courseTitle}
               </h3>
               <p className="relative text-xs text-gray-500 mb-1">
-                by {cert.tutor_name}
+                by {cert.tutorName}
               </p>
 
-              {/* Meta */}
               <div className="relative mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3 w-3" aria-hidden="true" />
-                  {new Date(cert.issued_at).toLocaleDateString('en-NG', {
+                  {new Date(cert.issuedAt).toLocaleDateString('en-NG', {
                     year: 'numeric', month: 'short', day: 'numeric',
                   })}
                 </span>
-                {cert.total_duration_seconds > 0 && (
+                {cert.courseDuration > 0 && (
                   <span className="flex items-center gap-1">
                     <BookOpen className="h-3 w-3" aria-hidden="true" />
-                    {formatDuration(cert.total_duration_seconds)}
+                    {formatDuration(cert.courseDuration)}
                   </span>
                 )}
               </div>
 
-              {/* Download */}
-              <button
-                onClick={() => void handleDownload(cert.id, cert.course_title)}
-                disabled={downloading === cert.id}
-                className="relative mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-60 transition-colors"
+              <a
+                href={`/api/certificates/${cert.id}/download`}
+                className="relative mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 transition-colors"
               >
-                {downloading === cert.id ? (
-                  <>
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Downloading…
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4" aria-hidden="true" />
-                    Download PDF
-                  </>
-                )}
-              </button>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Download PDF
+              </a>
 
-              {/* Certificate ID */}
               <p className="relative mt-2 text-center font-mono text-[10px] text-gray-400 truncate">
                 ID: {cert.id}
               </p>

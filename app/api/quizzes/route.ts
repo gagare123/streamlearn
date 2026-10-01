@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db, quizzes, courses, enrollments } from '@db/index'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray, desc } from 'drizzle-orm'
 import { requireTutor, requireOwnerOrAdmin, getIdentityFromHeaders } from '@lib/rbac'
+import { requireRole } from '@/lib/auth'
 import { writeAuditLog, auditMeta } from '@lib/audit'
 import { handleRouteError, Errors } from '@lib/errors'
 
@@ -10,20 +11,118 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/quizzes?courseId=...
+// GET /api/quizzes
 //
-// Returns quizzes for a course.
-// Students only see published quizzes.
-// Tutors/Admins see all quizzes for their own courses.
+// Case 1: No courseId + STUDENT
+//   → Return all published quizzes from the student's enrolled courses.
+//
+// Case 2: courseId provided + STUDENT
+//   → Return published quizzes for that course (must be enrolled).
+//
+// Case 3: courseId provided + TUTOR/ADMIN
+//   → Return all quizzes for that course (must own it or be admin).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
-    const identity = getIdentityFromHeaders(request)
     const url = new URL(request.url)
     const courseId = url.searchParams.get('courseId')
 
-    if (!courseId) throw Errors.badRequest('courseId query parameter is required')
+    // ── Case 1: Student dashboard — list quizzes across enrollments ──────
+    if (!courseId) {
+      const identity = await requireRole(request, 'STUDENT', 'TUTOR', 'ADMIN')
+
+      if (identity.role === 'STUDENT') {
+        // Get enrolled course IDs
+        const enrolledRows = await db
+          .select({ courseId: enrollments.courseId })
+          .from(enrollments)
+          .where(eq(enrollments.studentId, identity.sub!))
+
+        const enrolledIds = enrolledRows.map((r) => r.courseId)
+
+        if (enrolledIds.length === 0) {
+          return NextResponse.json({ success: true, data: { quizzes: [] } })
+        }
+
+        const rows = await db
+          .select({
+            id: quizzes.id,
+            title: quizzes.title,
+            description: quizzes.description,
+            courseId: quizzes.courseId,
+            timeLimitSeconds: quizzes.timeLimitSeconds,
+            passMark: quizzes.passMark,
+            maxAttempts: quizzes.maxAttempts,
+            isPublished: quizzes.isPublished,
+            courseTitle: courses.title,
+          })
+          .from(quizzes)
+          .innerJoin(courses, eq(quizzes.courseId, courses.id))
+          .where(and(
+            inArray(quizzes.courseId, enrolledIds),
+            eq(quizzes.isPublished, true),
+          ))
+          .orderBy(desc(quizzes.createdAt))
+
+        return NextResponse.json({ success: true, data: { quizzes: rows } })
+      }
+
+      // Tutors/Admins without courseId — return quizzes from their courses
+      if (identity.role === 'TUTOR') {
+        const ownedCourseRows = await db
+          .select({ id: courses.id })
+          .from(courses)
+          .where(eq(courses.tutorId, identity.sub!))
+
+        const ownedIds = ownedCourseRows.map((r) => r.id)
+        if (ownedIds.length === 0) {
+          return NextResponse.json({ success: true, data: { quizzes: [] } })
+        }
+
+        const rows = await db
+          .select({
+            id: quizzes.id,
+            title: quizzes.title,
+            description: quizzes.description,
+            courseId: quizzes.courseId,
+            timeLimitSeconds: quizzes.timeLimitSeconds,
+            passMark: quizzes.passMark,
+            maxAttempts: quizzes.maxAttempts,
+            isPublished: quizzes.isPublished,
+            courseTitle: courses.title,
+          })
+          .from(quizzes)
+          .innerJoin(courses, eq(quizzes.courseId, courses.id))
+          .where(inArray(quizzes.courseId, ownedIds))
+          .orderBy(desc(quizzes.createdAt))
+
+        return NextResponse.json({ success: true, data: { quizzes: rows } })
+      }
+
+      // Admin — return all
+      const rows = await db
+        .select({
+          id: quizzes.id,
+          title: quizzes.title,
+          description: quizzes.description,
+          courseId: quizzes.courseId,
+          timeLimitSeconds: quizzes.timeLimitSeconds,
+          passMark: quizzes.passMark,
+          maxAttempts: quizzes.maxAttempts,
+          isPublished: quizzes.isPublished,
+          courseTitle: courses.title,
+        })
+        .from(quizzes)
+        .innerJoin(courses, eq(quizzes.courseId, courses.id))
+        .orderBy(desc(quizzes.createdAt))
+        .limit(100)
+
+      return NextResponse.json({ success: true, data: { quizzes: rows } })
+    }
+
+    // ── Case 2/3: courseId provided ────────────────────────────────────────
+    const identity = getIdentityFromHeaders(request)
 
     const [course] = await db
       .select({ tutorId: courses.tutorId, status: courses.status })
@@ -33,15 +132,12 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     if (!course) throw Errors.notFound('Course')
 
-    // Build conditions based on role
     const conditions = [eq(quizzes.courseId, courseId)]
 
     if (!identity || identity.role === 'STUDENT') {
-      // Students only see published quizzes (and must be enrolled)
       conditions.push(eq(quizzes.isPublished, true))
 
       if (identity) {
-        // Verify enrollment
         const [enrollment] = await db
           .select({ id: enrollments.id })
           .from(enrollments)
@@ -51,7 +147,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         if (!enrollment) throw Errors.forbidden('You must be enrolled to access quizzes')
       }
     } else if (identity.role === 'TUTOR' && identity.userId !== course.tutorId) {
-      // Tutors can only see quizzes for their own courses
       throw Errors.forbidden('You do not own this course')
     }
 
@@ -60,6 +155,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         id: quizzes.id,
         title: quizzes.title,
         description: quizzes.description,
+        courseId: quizzes.courseId,
         timeLimitSeconds: quizzes.timeLimitSeconds,
         passMark: quizzes.passMark,
         maxAttempts: quizzes.maxAttempts,
@@ -68,6 +164,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       })
       .from(quizzes)
       .where(and(...conditions))
+      .orderBy(desc(quizzes.createdAt))
 
     return NextResponse.json({ success: true, data: { quizzes: rows } })
   } catch (err) {
@@ -76,16 +173,16 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/quizzes — create a quiz (TUTOR/ADMIN)
+// POST /api/quizzes — create a new quiz (TUTOR/ADMIN only)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
-  courseId: z.string().uuid('Invalid course ID'),
-  title: z.string().trim().min(3, 'Title must be at least 3 characters').max(255),
+  courseId: z.string().uuid(),
+  title: z.string().trim().min(3).max(255),
   description: z.string().trim().max(2000).optional(),
   timeLimitSeconds: z.number().int().min(60).max(10800).nullable().optional(),
-  passMark: z.number().int().min(0).max(100).default(70),
-  maxAttempts: z.number().int().min(1).max(10).default(3),
+  passMark: z.number().int().min(0).max(100).optional(),
+  maxAttempts: z.number().int().min(1).max(10).optional(),
 })
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -105,7 +202,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const { courseId, title, description, timeLimitSeconds, passMark, maxAttempts } = parsed.data
 
-    // Verify course ownership
     const [course] = await db
       .select({ tutorId: courses.tutorId })
       .from(courses)
@@ -122,9 +218,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         title,
         description: description ?? null,
         timeLimitSeconds: timeLimitSeconds ?? null,
-        passMark,
-        maxAttempts,
-        isPublished: false,
+        passMark: passMark ?? 70,
+        maxAttempts: maxAttempts ?? 3,
       })
       .returning()
 
@@ -132,7 +227,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       actorId: identity.userId,
       action: 'quiz.created',
       targetType: 'quiz',
-      targetId: quiz!.id,
+      targetId: quiz.id,
       ...auditMeta(request),
       metadata: { courseId, title },
     })

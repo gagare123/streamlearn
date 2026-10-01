@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +18,6 @@ type FormState =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
-  const router = useRouter()
   const [state, setState] = useState<FormState>({ status: 'idle' })
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {

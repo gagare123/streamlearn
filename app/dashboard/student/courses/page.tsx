@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { BookOpen, PlayCircle, CheckCircle, Clock } from 'lucide-react'
+import { BookOpen, PlayCircle, CheckCircle } from 'lucide-react'
 import { formatDuration } from '@/lib/utils'
 
 type Enrollment = {

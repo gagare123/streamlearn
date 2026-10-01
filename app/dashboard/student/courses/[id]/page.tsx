@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { formatNaira, formatDuration } from '@/lib/utils'
 import {
   PlayCircle, CheckCircle, Lock, Clock,
-  ChevronDown, ChevronRight, ArrowLeft, BookOpen,
+  ChevronDown, ChevronRight, ArrowLeft,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ type EnrollmentData = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function StudentCourseViewPage() {
-  const { ready, user } = useAuthGuard({ roles: ['STUDENT'] })
+  const { ready } = useAuthGuard({ roles: ['STUDENT'] })
   const { apiFetch } = useApiFetch()
   const params = useParams()
   const router = useRouter()

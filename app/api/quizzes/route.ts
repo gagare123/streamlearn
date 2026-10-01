@@ -33,7 +33,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       const identity = await requireRole(request, 'STUDENT', 'TUTOR', 'ADMIN')
 
       if (identity.role === 'STUDENT') {
-        // Get enrolled course IDs
         const enrolledRows = await db
           .select({ courseId: enrollments.courseId })
           .from(enrollments)
@@ -211,7 +210,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!course) throw Errors.notFound('Course')
     requireOwnerOrAdmin(identity, course.tutorId)
 
-    const [quiz] = await db
+    const inserted = await db
       .insert(quizzes)
       .values({
         courseId,
@@ -222,6 +221,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         maxAttempts: maxAttempts ?? 3,
       })
       .returning()
+
+    // ✅ Fix: Ensure quiz is defined
+    const quiz = inserted[0]
+    if (!quiz) throw Errors.internalError('Failed to create quiz')
 
     await writeAuditLog({
       actorId: identity.userId,

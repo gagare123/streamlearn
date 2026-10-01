@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function PaymentCallbackPage() {
+function PaymentCallbackContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [status, setStatus] = useState('Processing your payment...')
@@ -15,7 +15,6 @@ export default function PaymentCallbackPage() {
       return
     }
 
-    // Verify the payment
     fetch(`/api/payments/verify/${reference}`, { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
@@ -36,5 +35,22 @@ export default function PaymentCallbackPage() {
         <p className="text-lg font-medium text-gray-700">{status}</p>
       </div>
     </div>
+  )
+}
+
+export default function PaymentCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-center">
+            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
+            <p className="text-lg font-medium text-gray-700">Loading…</p>
+          </div>
+        </div>
+      }
+    >
+      <PaymentCallbackContent />
+    </Suspense>
   )
 }

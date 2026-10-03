@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db, enrollments, users, courses, certificates } from '@db/index'
-import { eq, and, desc, isNotNull } from 'drizzle-orm'
+import { eq, desc } from 'drizzle-orm'
 import { requireAdmin } from '@/lib/rbac'
 import { handleRouteError } from '@/lib/errors'
 

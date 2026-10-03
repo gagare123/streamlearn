@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db, lessonProgress, lessons, courseSections, enrollments } from '@db/index'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, count } from 'drizzle-orm'
 import { requireIdentity } from '@/lib/rbac'
 import { writeAuditLog, auditMeta } from '@/lib/audit'
 import { redis, RedisKeys } from '@/lib/redis'
@@ -27,7 +27,10 @@ const schema = z.object({
 //   - Student must be enrolled in the course containing the lesson
 //   - Lesson must be READY (has a playback ID)
 //
-// Auto-completes when watchedSeconds >= 90% of lesson duration.
+// Auto-completes:
+//   - Lesson level: when watchedSeconds >= 90% of lesson duration
+//   - Course level: when all lessons in the course are completed → enrollment
+//                   is marked COMPLETED, so the admin can issue a certificate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -72,6 +75,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // ── Verify enrollment (unless free preview) ───────────────────────────
+    let isEnrolled = lessonRow.isFreePreview
     if (!lessonRow.isFreePreview) {
       const [enrollment] = await db
         .select({ id: enrollments.id })
@@ -87,18 +91,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!enrollment) {
         throw Errors.forbidden('You must be enrolled to track progress')
       }
+      isEnrolled = true
     }
 
-    // ── Calculate completion ───────────────────────────────────────────────
-    // Auto-complete at 90% of lesson duration, or use client flag
+    // ── Calculate lesson completion ────────────────────────────────────────
     const duration = lessonRow.durationSeconds ?? 0
     const autoCompleted = duration > 0 && watchedSeconds >= duration * 0.9
     const isCompleted = clientCompleted ?? autoCompleted
 
-    // ── Upsert progress (high-water mark for watchedSeconds) ──────────────
+    // ── Upsert progress (high-water mark) ──────────────────────────────────
     const now = new Date()
     const existingRows = await db
-      .select({ id: lessonProgress.id, watchedSeconds: lessonProgress.watchedSeconds, isCompleted: lessonProgress.isCompleted })
+      .select({
+        id: lessonProgress.id,
+        watchedSeconds: lessonProgress.watchedSeconds,
+        isCompleted: lessonProgress.isCompleted,
+      })
       .from(lessonProgress)
       .where(
         and(
@@ -110,7 +118,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const existing = existingRows[0]
 
-    // Only update if new progress is greater (high-water mark)
     const newWatchedSeconds = existing
       ? Math.max(existing.watchedSeconds, watchedSeconds)
       : watchedSeconds
@@ -136,10 +143,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
     }
 
-    // Invalidate enrollment cache so dashboard shows updated progress
+    // Invalidate enrollment cache
     await redis.del(RedisKeys.studentEnrollmentsCache(identity.userId))
 
-    // Audit only on first completion
+    // Audit on first lesson completion
     if (newIsCompleted && !existing?.isCompleted) {
       await writeAuditLog({
         actorId: identity.userId,
@@ -151,11 +158,83 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
     }
 
+    // ── Course-level auto-completion ───────────────────────────────────────
+    // If the student is enrolled AND just marked this lesson as completed,
+    // check whether ALL lessons in the course are now complete.
+    // If yes → mark the enrollment as COMPLETED so admin can issue a certificate.
+    let courseCompleted = false
+
+    if (isEnrolled && !lessonRow.isFreePreview && newIsCompleted) {
+      // Total lessons in the course
+      const [totalRow] = await db
+        .select({ total: count() })
+        .from(lessons)
+        .innerJoin(courseSections, eq(lessons.sectionId, courseSections.id))
+        .where(eq(courseSections.courseId, lessonRow.courseId))
+
+      // Completed lessons for this student in this course
+      const [completedRow] = await db
+        .select({ total: count() })
+        .from(lessonProgress)
+        .innerJoin(lessons, eq(lessonProgress.lessonId, lessons.id))
+        .innerJoin(courseSections, eq(lessons.sectionId, courseSections.id))
+        .where(
+          and(
+            eq(lessonProgress.studentId, identity.userId),
+            eq(lessonProgress.isCompleted, true),
+            eq(courseSections.courseId, lessonRow.courseId),
+          ),
+        )
+
+      const totalLessons = Number(totalRow?.total ?? 0)
+      const completedLessons = Number(completedRow?.total ?? 0)
+
+      // All lessons done → mark enrollment COMPLETED
+      if (totalLessons > 0 && completedLessons >= totalLessons) {
+        const updateResult = await db
+          .update(enrollments)
+          .set({
+            status: 'COMPLETED',
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(enrollments.studentId, identity.userId),
+              eq(enrollments.courseId, lessonRow.courseId),
+              eq(enrollments.status, 'ACTIVE'),
+            ),
+          )
+          .returning({ id: enrollments.id })
+
+        if (updateResult.length > 0) {
+          courseCompleted = true
+
+          await writeAuditLog({
+            actorId: identity.userId,
+            action: 'enrollment.completed',
+            targetType: 'enrollment',
+            targetId: updateResult[0]!.id,
+            ...auditMeta(request),
+            metadata: {
+              courseId: lessonRow.courseId,
+              totalLessons,
+              completedLessons,
+            },
+          })
+
+          // Invalidate cache again for the enrollment status change
+          await redis.del(RedisKeys.studentEnrollmentsCache(identity.userId))
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         watchedSeconds: newWatchedSeconds,
         isCompleted: newIsCompleted,
+        courseCompleted,
       },
     })
   } catch (err) {

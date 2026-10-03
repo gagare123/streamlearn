@@ -48,6 +48,7 @@ const ADMIN_NAV: NavItem[] = [
   { label: 'Overview',      href: '/dashboard/admin',              icon: LayoutDashboard },
   { label: 'Users',         href: '/dashboard/admin/users',        icon: Users },
   { label: 'Courses',       href: '/dashboard/admin/courses',      icon: BookOpen },
+  { label: 'Certificates',  href: '/dashboard/admin/certificates', icon: Award }, 
   { label: 'Analytics',     href: '/dashboard/admin/analytics',    icon: BarChart3 },
   { label: 'Audit Log',     href: '/dashboard/admin/audit',        icon: Shield },
   { label: 'Notifications', href: '/dashboard/notifications',      icon: Bell },

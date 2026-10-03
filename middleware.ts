@@ -60,10 +60,15 @@ function addSecurityHeaders(response: NextResponse, pathname: string): void {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(self)')
 
-  if (process.env['NODE_ENV'] === 'production') {
-    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
-  }
-
+  if (
+  process.env['NODE_ENV'] === 'production' &&
+  process.env['DISABLE_HSTS'] !== 'true'
+) {
+  response.headers.set(
+    'Strict-Transport-Security',
+    'max-age=31536000; includeSubDomains; preload',
+  )
+}
   // Skip CSP in development to allow React Refresh (needs unsafe-eval)
   if (process.env.NODE_ENV !== 'development') {
     // Content-Security-Policy — skip for API routes (they return JSON, not HTML)

@@ -64,7 +64,7 @@ type EnrollmentData = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function StudentCourseViewPage() {
-  const { ready } = useAuthGuard({ roles: ['STUDENT'] })
+  const { ready } = useAuthGuard({ roles: ['STUDENT', 'TUTOR', 'ADMIN'] })
   const { apiFetch } = useApiFetch()
   const params = useParams()
   const router = useRouter()
